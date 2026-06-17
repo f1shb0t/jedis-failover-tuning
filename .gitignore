@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+target/
+*.class
+
+# Log files
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
