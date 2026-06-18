@@ -59,7 +59,7 @@
 
 ### 前置条件
 
-- JDK 11+
+- JDK 11+（安装命令见 [Step 1](#step-1-准备环境)）
 - Maven 3.6+
 - 能访问 ElastiCache Primary Endpoint 的 EC2 实例（同 VPC）
 
@@ -97,8 +97,59 @@ java -Dsun.net.inetaddr.ttl=5 \
 ### Step 1: 准备环境
 
 1. 确认 EC2 实例和 ElastiCache 在同一 VPC，Security Group 放行 6379
-2. SSH 到 EC2 实例，安装 JDK 和 Maven
-3. 克隆本项目并编译
+
+2. SSH 到 EC2 实例，安装 **Java 11** 和 Maven（按操作系统选择）：
+
+   **Amazon Linux 2023（推荐用 Corretto 11）**
+   ```bash
+   sudo dnf install -y java-11-amazon-corretto-devel maven
+   ```
+
+   **Amazon Linux 2**
+   ```bash
+   # Corretto 11
+   sudo amazon-linux-extras install -y java-openjdk11 || \
+     sudo yum install -y java-11-amazon-corretto-devel
+   sudo yum install -y maven
+   # 若仓库无 maven，可手动装：
+   # sudo wget https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz -P /opt && \
+   #   sudo tar xzf /opt/apache-maven-3.9.6-bin.tar.gz -C /opt && \
+   #   echo 'export PATH=/opt/apache-maven-3.9.6/bin:$PATH' | sudo tee /etc/profile.d/maven.sh && source /etc/profile.d/maven.sh
+   ```
+
+   **Ubuntu / Debian**
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y openjdk-11-jdk maven
+   ```
+
+   **RHEL / CentOS / Rocky / AlmaLinux**
+   ```bash
+   # OpenJDK 11
+   sudo yum install -y java-11-openjdk-devel maven
+   # 或使用 Amazon Corretto 11：
+   # sudo rpm --import https://yum.corretto.aws/corretto.key
+   # sudo curl -Lo /etc/yum.repos.d/corretto.repo https://yum.corretto.aws/corretto.repo
+   # sudo yum install -y java-11-amazon-corretto-devel maven
+   ```
+
+3. 验证安装（`java -version` 应显示 `11.x`）：
+   ```bash
+   java -version    # 期望输出含 "11.0.x"（openjdk 或 Corretto-11 均可）
+   mvn -version     # 期望 Maven 3.6+，且 "Java version: 11.x"
+   ```
+
+   > ⚠️ 如果机器上装了多个 JDK，确保默认指向 11：
+   > - Amazon Linux / RHEL：`sudo alternatives --config java`
+   > - Ubuntu/Debian：`sudo update-alternatives --config java`
+   > 或显式设置 `export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))`
+
+4. 克隆本项目并编译：
+   ```bash
+   git clone https://github.com/f1shb0t/jedis-failover-tuning.git
+   cd jedis-failover-tuning
+   mvn clean package -DskipTests
+   ```
 
 ### Step 2: 基准测试（无 failover）
 
@@ -124,6 +175,34 @@ java -Dsun.net.inetaddr.ttl=5 -cp target/jedis-failover-tuning-1.0.0.jar com.aws
 ```
 
 在运行过程中去 AWS Console 触发 failover，观察 DNS 变化时间。
+
+### Step 3.5: 业务读写影响时间测试（BusinessImpactTest）
+
+`FailoverTuningTest`（主程序）站在**底层连接**视角统计单次 GET/SET 的中断。
+`BusinessImpactTest` 则站在**真实业务代码**视角：每笔「业务请求」由一组读写组合（事务）构成——
+`GET session` → `SET session` → `INCR counter` → `GET counter` 回读校验，
+任意一步失败即整笔业务请求失败。它测量的是 failover 期间**业务侧真正不可用的时间窗口**。
+
+```bash
+# 业务视角 failover 影响测试（推荐配 DNS TTL）
+java -Dsun.net.inetaddr.ttl=5 -cp target/jedis-failover-tuning-1.0.0.jar \
+  com.aws.redis.BusinessImpactTest <primary-endpoint> 6379 aggressive 300 50
+```
+
+参数说明：
+- `endpoint` / `port`：同主程序
+- `config`：`default` | `conservative` | `aggressive` | `ultra`
+- `duration`：测试时长秒数（默认 300）
+- `qps`：每秒**业务请求**数（默认 50，每笔含 4 个 Redis 命令）
+
+运行中去 AWS Console 触发 failover。输出报告重点指标：
+- **BUSINESS IMPACT WINDOW**：业务请求持续失败的时长（ms）—— 这是业务侧真正感知到的"宕机时间"
+- **Failed requests during impact**：受影响期间失败的业务请求笔数
+- **ERROR TYPE DISTRIBUTION**：异常类型分布（连接异常 / 一致性错误等）
+- **BEFORE vs AFTER 延迟基线**：failover 前后业务延迟 p50/p99 对比，判断恢复后性能是否回到基线
+
+> 💡 与 `FailoverTuningTest` 的 `TOTAL DOWNTIME` 对比看：业务影响窗口通常 ≥ 底层连接 downtime，
+> 因为业务事务多步、任一步失败即算失败，更贴近用户真实感受。
 
 ### Step 4: 多配置对比测试
 
@@ -297,7 +376,8 @@ jedis-failover-tuning/
 ├── README.md                        # 本文档
 ├── run-all-configs.sh              # 批量测试脚本
 └── src/main/java/com/aws/redis/
-    ├── FailoverTuningTest.java     # 主测试程序
+    ├── FailoverTuningTest.java     # 主测试程序（底层连接视角）
+    ├── BusinessImpactTest.java     # 业务读写影响时间测试（业务请求视角）
     ├── PoolConfig.java             # 4 种连接池配置方案
     └── DnsCacheTest.java           # DNS 缓存影响测试
 ```
