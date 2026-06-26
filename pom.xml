@@ -30,6 +30,15 @@
             <version>${jedis.version}</version>
         </dependency>
 
+        <!-- 显式锁定 slf4j-api 2.0.x，覆盖 jedis 传递进来的 1.7.36。
+             logback 1.4.x 用的是 SLF4J 2.x 的 ServiceProvider 机制，
+             若 classpath 里是 1.7.x 会走旧的 StaticLoggerBinder 查找 → 失败退回 NOP（日志全丢）。 -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.9</version>
+        </dependency>
+
         <!-- SLF4J + Logback for logging -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
@@ -60,6 +69,8 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.aws.redis.FailoverTuningTest</mainClass>
                                 </transformer>
+                                <!-- 合并 META-INF/services（含 SLF4J 2.x 的 SLF4JServiceProvider），否则 fat-jar 里 logback 绑定失效 -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                         </configuration>
                     </execution>
