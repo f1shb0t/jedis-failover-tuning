@@ -229,12 +229,28 @@ p99: xxxus
 
 ## 配置方案对比
 
-| 配置 | testOnBorrow | 驱逐频率 | maxWait | 特点 | 预期 RTO |
-|------|-------------|----------|---------|------|----------|
-| `default` | ❌ | 30s/轮 | 无限等 | Jedis 默认，作为对比基准 | 30-60s |
-| `conservative` | ✅ | 15s/轮 | 2s | 安全但每次借连接多 1 RTT | 10-20s |
-| `aggressive` | ❌ | 5s/轮 | 1s | 推荐平衡方案 | 5-15s |
-| `ultra` | ✅ | 3s/轮 | 500ms | 极端场景，连接开销大 | 3-8s |
+下表与 `PoolConfig.java` 中各方案的实际参数逐项对齐：
+
+| 参数 | `default` | `conservative` | `aggressive` ⭐ | `ultra` |
+|------|-----------|----------------|-----------------|---------|
+| maxTotal（最大连接数） | 8 | 20 | 30 | 50 |
+| maxIdle / minIdle | 8 / 0 | 10 / 5 | 15 / 5 | 10 / 2 |
+| **maxWait（借连接超时）** | **无限等（-1）** | 2s | **1s** | **500ms** |
+| testOnBorrow（借时 PING） | ❌ | ✅ | ❌ | ✅ |
+| testOnReturn（还时检测） | ❌ | ❌ | ✅ | ✅ |
+| testWhileIdle（空闲检测） | ❌ | ✅ | ✅ | ✅ |
+| 驱逐线程间隔 | 不运行（-1） | 15s/轮 | 5s/轮 | 3s/轮 |
+| 空闲多久可被驱逐 | — | 60s | 30s | 15s |
+| numTestsPerEvictionRun | 默认 | 3 | -1（全部） | -1（全部） |
+| 预期 RTO | 30-60s | 10-20s | 5-15s | 3-8s |
+| 用途 | 对比基准，勿用于生产 | 安全稳妥 | **推荐平衡方案** | 极端低 RTO 场景 |
+
+### 各方案设计取舍
+
+- **`default`（baseline）**：Jedis 原生默认（maxTotal=8、minIdle=0、不做健康检查、**不运行驱逐线程**、`maxWait=-1` 无限等待）。`maxWait` 无限等是致命伤——failover 后池里全是死连接时线程会永久阻塞。仅作对比基准，**生产勿用**。
+- **`conservative`**：开启 `testOnBorrow`，每次借连接先 PING，保证拿到的都是活连接，最安全。代价是正常运行时**每次借连接多 1 个 RTT**，高 QPS 下开销可观。
+- **`aggressive`（推荐）⭐**：**不开 `testOnBorrow`**（省掉日常 RTT），改用「1s 快速失败 + 5s 高频驱逐 + testOnReturn」组合。日常零额外开销，failover 时靠快速失败让业务层重试、后台驱逐清理死连接。大多数场景的最优解。
+- **`ultra`**：所有健康检查全开 + 最激进的驱逐（3s/轮、15s 即回收）+ 500ms 超时。连接近乎不残留，代价是**连接频繁创建销毁，CPU/网络开销最大**，且带 `testOnBorrow` 的 RTT 开销。仅在 RTO 要求 < 5s 时使用。
 
 > **注意**：实际 RTO 还取决于 ElastiCache 自身的 failover 完成时间（通常 15-30s），
 > 上面的 RTO 指的是「ElastiCache failover 完成后，客户端恢复正常操作的时间」。
