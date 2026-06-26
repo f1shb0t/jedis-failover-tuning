@@ -196,10 +196,10 @@ public class FailoverTuningTest {
         log.info("Duration: {}s", durationSeconds);
         log.info("----------------------------------------");
         log.info("Total Operations: {}", totalOps.get());
-        log.info("Successful:       {} ({:.2f}%)", successOps.get(),
-                totalOps.get() > 0 ? (successOps.get() * 100.0 / totalOps.get()) : 0);
-        log.info("Failed:           {} ({:.2f}%)", failedOps.get(),
-                totalOps.get() > 0 ? (failedOps.get() * 100.0 / totalOps.get()) : 0);
+        log.info("Successful:       {} ({}%)", successOps.get(),
+                String.format("%.2f", totalOps.get() > 0 ? (successOps.get() * 100.0 / totalOps.get()) : 0.0));
+        log.info("Failed:           {} ({}%)", failedOps.get(),
+                String.format("%.2f", totalOps.get() > 0 ? (failedOps.get() * 100.0 / totalOps.get()) : 0.0));
         log.info("----------------------------------------");
 
         if (failoverStartMs > 0) {
@@ -210,7 +210,7 @@ public class FailoverTuningTest {
             if (failoverEndMs > 0) {
                 log.info("  Recovered at:      {} (epoch: {}ms)",
                         Instant.ofEpochMilli(failoverEndMs), failoverEndMs);
-                log.info("  >>> TOTAL DOWNTIME: {}ms ({:.1f}s) <<<", downtime, downtime / 1000.0);
+                log.info("  >>> TOTAL DOWNTIME: {}ms ({}s) <<<", downtime, String.format("%.1f", downtime / 1000.0));
             } else {
                 log.info("  >>> NOT RECOVERED during test window <<<");
             }
